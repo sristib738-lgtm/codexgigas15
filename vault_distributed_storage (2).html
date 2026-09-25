@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Vault — Distributed Object Storage Simulator</title>
+<style>
+:root{--bg:#0b1020;--panel:#11182b;--panel2:#17213a;--line:#263452;--text:#e8eefc;--muted:#91a0bd;--good:#32d583;--warn:#f5b942;--bad:#ff5d73;--accent:#6ea8fe}
+*{box-sizing:border-box}body{margin:0;background:linear-gradient(135deg,#090e1a,#0f1730 55%,#0b1020);color:var(--text);font:14px Inter,system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+header{padding:22px 28px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center;gap:20px;background:#0c1324e8;position:sticky;top:0;z-index:5;backdrop-filter:blur(10px)}
+.brand{display:flex;gap:12px;align-items:center}.logo{width:38px;height:38px;border-radius:10px;background:linear-gradient(135deg,#6ea8fe,#8b5cf6);display:grid;place-items:center;font-weight:900}.brand h1{margin:0;font-size:20px}.brand small{color:var(--muted)}
+.controls{display:flex;gap:8px;flex-wrap:wrap}button,select,input{background:#151f36;color:var(--text);border:1px solid #30405f;border-radius:8px;padding:9px 11px}button{cursor:pointer;font-weight:700}button:hover{border-color:var(--accent);background:#1a2947}.danger{border-color:#713043;color:#ff91a0}.primary{background:#2454a6;border-color:#3975df}
+main{max-width:1400px;margin:auto;padding:22px}.grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}.card{background:linear-gradient(180deg,#121a2d,#10172a);border:1px solid var(--line);border-radius:12px;padding:16px;box-shadow:0 10px 35px #0003}.metric{font-size:28px;font-weight:800;margin-top:6px}.label{color:var(--muted);font-size:12px}.status{display:inline-flex;align-items:center;gap:6px;font-size:12px}.dot{width:8px;height:8px;border-radius:50%;background:var(--good)}.dot.warn{background:var(--warn)}.dot.bad{background:var(--bad)}
+.layout{display:grid;grid-template-columns:1.3fr .7fr;gap:14px;margin-top:14px}.section-title{font-size:15px;font-weight:800;margin-bottom:12px}.nodes{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}.node{border:1px solid var(--line);border-radius:10px;padding:12px;background:#111a2f}.node.off{opacity:.45;border-color:#703043}.node.corrupt{border-color:#9a6c20}.node-head{display:flex;justify-content:space-between;align-items:center}.node-name{font-weight:800}.node-meta{color:var(--muted);font-size:12px;margin-top:7px;line-height:1.6}.bar{height:7px;background:#222e49;border-radius:99px;overflow:hidden;margin-top:8px}.bar i{display:block;height:100%;background:#6ea8fe}.actions{display:flex;gap:6px;margin-top:10px}.actions button{font-size:11px;padding:6px 8px}
+table{width:100%;border-collapse:collapse}th,td{padding:9px 8px;text-align:left;border-bottom:1px solid #202c45;font-size:12px}th{color:var(--muted);font-weight:600}.ok{color:var(--good)}.warn{color:var(--warn)}.bad{color:var(--bad)}
+.log{height:310px;overflow:auto;font:12px ui-monospace,SFMono-Regular,Menlo,monospace;background:#080d18;border-radius:8px;padding:10px}.log div{padding:4px 0;border-bottom:1px solid #111a2b}.log .t{color:#6f84aa}.progress{height:10px;background:#202b43;border-radius:99px;overflow:hidden}.progress i{display:block;height:100%;background:linear-gradient(90deg,#6ea8fe,#32d583);width:0%}
+form{display:grid;gap:9px}.row{display:grid;grid-template-columns:1fr 1fr;gap:8px}.hint{font-size:11px;color:var(--muted);line-height:1.5}
+@media(max-width:950px){.grid{grid-template-columns:repeat(2,1fr)}.layout{grid-template-columns:1fr}.nodes{grid-template-columns:repeat(2,1fr)}}@media(max-width:600px){.grid,.nodes,.row{grid-template-columns:1fr}header{align-items:flex-start;flex-direction:column}}
+</style>
+</head>
+<body>
+<header>
+  <div class="brand"><div class="logo">V</div><div><h1>Vault</h1><small>Fault-tolerant distributed object storage simulator</small></div></div>
+  <div class="controls">
+    <select id="policy"><option value="3">Replication: 3x</option><option value="2">Replication: 2x</option><option value="4">Replication: 4x</option></select>
+    <select id="durability"><option value="quorum">Write quorum: majority</option><option value="all">Write quorum: all replicas</option><option value="one">Write quorum: one replica</option></select>
+    <button class="primary" onclick="simulateWrite()">Write object</button>
+    <button onclick="verifyAll()">Verify integrity</button>
+    <button onclick="repairAll()">Repair unhealthy</button>
+  </div>
+</header>
+
+<main>
+  <section class="grid">
+    <div class="card"><div class="label">OBJECTS</div><div class="metric" id="objects">1,284</div><div class="status"><span class="dot"></span> serving normally</div></div>
+    <div class="card"><div class="label">STORAGE USED</div><div class="metric" id="storage">7.8 TB</div><div class="label">logical: 2.6 TB · overhead: 3.0×</div></div>
+    <div class="card"><div class="label">HEALTHY REPLICAS</div><div class="metric" id="healthy">18 / 18</div><div class="status"><span class="dot"></span> quorum available</div></div>
+    <div class="card"><div class="label">RECOVERY QUEUE</div><div class="metric" id="queue">0</div><div class="status"><span class="dot"></span> no pending repair</div></div>
+  </section>
+
+  <div class="layout">
+    <section class="card">
+      <div class="section-title">Storage nodes</div>
+      <div class="nodes" id="nodes"></div>
+    </section>
+
+    <section class="card">
+      <div class="section-title">Object write path</div>
+      <form onsubmit="putObject(event)">
+        <div class="row"><input id="objName" placeholder="object key" value="photos/2026/report.bin"><input id="objSize" type="number" min="1" value="256" placeholder="size MB"></div>
+        <button class="primary">PUT object</button>
+      </form>
+      <p class="hint">Vault hashes the payload, chooses failure-domain-aware replicas, persists metadata, waits for the configured write quorum, then exposes the object. A background reconciler repairs missing or stale replicas.</p>
+      <div style="margin-top:14px"><div class="label">REPAIR PROGRESS</div><div class="progress"><i id="repairProgress"></i></div></div>
+    </section>
+
+    <section class="card">
+      <div class="section-title">Metadata & consistency</div>
+      <table><thead><tr><th>Object</th><th>Version</th><th>Replicas</th><th>Checksum</th><th>State</th></tr></thead>
+      <tbody id="objectsTable"></tbody></table>
+    </section>
+
+    <section class="card">
+      <div class="section-title">Failure injection</div>
+      <div class="actions">
+        <button onclick="failRandom()">Fail random node</button>
+        <button onclick="corruptRandom()">Corrupt random object</button>
+        <button onclick="partition()">Network partition</button>
+        <button class="danger" onclick="recoverAll()">Recover nodes</button>
+      </div>
+      <p class="hint">These controls model independent failures. Reads use healthy replicas and checksum verification. Writes are accepted only when the configured quorum can be satisfied.</p>
+    </section>
+
+    <section class="card">
+      <div class="section-title">Request / repair log</div>
+      <div class="log" id="log"></div>
+    </section>
+
+    <section class="card">
+      <div class="section-title">Architecture</div>
+      <div class="hint" style="font-size:13px;line-height:1.75">
+        <b>Client → Router</b> selects a placement set.<br>
+        <b>Metadata quorum</b> records object version, placement and checksum.<br>
+        <b>Storage nodes</b> hold immutable object chunks plus hashes.<br>
+        <b>Read repair</b> detects stale/corrupt replicas and schedules replacement.<br>
+        <b>Rebalancer</b> moves replicas when node capacity/health changes.<br>
+        <b>Garbage collector</b> removes obsolete versions after the retention window.
+      </div>
+    </section>
+  </div>
+</main>
+
+<script>
+const N=6;
+let nodes=Array.from({length:N},(_,i)=>({id:`node-${i+1}`,rack:`rack-${1+i%3}`,up:true,partitioned:false,used:35+Math.floor(Math.random()*35)}));
+let objects=[
+ {key:"photos/2026/report.bin",version:12,size:256,replicas:[1,2,3],checksum:"9a7f…c21",state:"healthy"},
+ {key:"media/raw/video-88",version:7,size:1840,replicas:[2,4,5],checksum:"1d02…9be",state:"healthy"},
+ {key:"backups/db-2026-09-25",version:41,size:920,replicas:[1,4,6],checksum:"a81e…774",state:"healthy"},
+ {key:"docs/design.pdf",version:3,size:42,replicas:[3,5,6],checksum:"be71…042",state:"healthy"}
+];
+let queue=0, seq=1000;
+
+function log(msg,type=""){
+ const el=document.getElementById("log"), d=new Date().toLocaleTimeString();
+ el.innerHTML=`<div><span class="t">${d}</span> ${type?`<b class="${type}">[${type.toUpperCase()}]</b>`:""} ${msg}</div>`+el.innerHTML;
+}
+function render(){
+ document.getElementById("nodes").innerHTML=nodes.map(n=>`
+ <div class="node ${!n.up?'off':''} ${n.partitioned?'corrupt':''}">
+   <div class="node-head"><span class="node-name">${n.id}</span><span class="${n.up?'ok':'bad'}">${n.up?'● UP':'● DOWN'}</span></div>
+   <div class="node-meta">failure domain: ${n.rack}<br>used: ${n.used}% ${n.partitioned?'· PARTITIONED':''}</div>
+   <div class="bar"><i style="width:${n.used}%"></i></div>
+   <div class="actions"><button onclick="toggleNode(${n.id.split('-')[1]-1})">${n.up?'Fail':'Recover'}</button><button onclick="partitionNode(${n.id.split('-')[1]-1})">${n.partitioned?'Heal link':'Partition'}</button></div>
+ </div>`).join("");
+ document.getElementById("objectsTable").innerHTML=objects.map(o=>`<tr><td>${o.key}</td><td>v${o.version}</td><td>${o.replicas.map(r=>`N${r}`).join(", ")}</td><td>${o.checksum}</td><td class="${o.state==='healthy'?'ok':o.state==='repairing'?'warn':'bad'}">${o.state}</td></tr>`).join("");
+ const healthy=nodes.filter(n=>n.up&&!n.partitioned).length;
+ document.getElementById("healthy").textContent=`${healthy*3} / 18`;
+ document.getElementById("queue").textContent=queue;
+}
+function toggleNode(i){nodes[i].up=!nodes[i].up;log(`${nodes[i].id} ${nodes[i].up?'recovered':'failed'}`,nodes[i].up?'ok':'bad');if(!nodes[i].up){queue++;markRepairs()}render()}
+function partitionNode(i){nodes[i].partitioned=!nodes[i].partitioned;log(`${nodes[i].id} network link ${nodes[i].partitioned?'partitioned':'healed'}`,"warn");render()}
+function failRandom(){let up=nodes.filter(n=>n.up);if(!up.length)return;toggleNode(nodes.indexOf(up[Math.floor(Math.random()*up.length)]))}
+function corruptRandom(){let o=objects[Math.floor(Math.random()*objects.length)];o.state="corrupt";queue++;log(`checksum mismatch detected for ${o.key}; replica quarantine scheduled`,"bad");render();markRepairs()}
+function partition(){nodes.slice(0,3).forEach(n=>n.partitioned=true);log("partial network partition injected: racks 1–2 cannot reach all peers","warn");render()}
+function recoverAll(){nodes.forEach(n=>{n.up=true;n.partitioned=false});queue=Math.max(0,queue);log("all node failures and partitions cleared","ok");repairAll()}
+function putObject(e){e.preventDefault();const key=document.getElementById("objName").value.trim();const size=+document.getElementById("objSize").value||1;const rf=+document.getElementById("policy").value;const candidates=nodes.filter(n=>n.up&&!n.partitioned).sort((a,b)=>a.used-b.used);if(candidates.length<Math.ceil(rf/2)&&document.getElementById("durability").value!=="one"){log(`PUT ${key} rejected: insufficient healthy nodes for configured quorum`,"bad");return}
+ const reps=candidates.slice(0,Math.min(rf,candidates.length)).map(n=>+n.id.split("-")[1]);const checksum=Math.random().toString(16).slice(2,10)+"…"+Math.random().toString(16).slice(2,5);
+ objects.unshift({key,version:1+Math.floor(Math.random()*50),size,replicas:reps,checksum,state:"healthy"});document.getElementById("objects").textContent=(+document.getElementById("objects").textContent.replace(",","")+1).toLocaleString();nodes.filter(n=>reps.includes(+n.id.split("-")[1])).forEach(n=>n.used=Math.min(99,n.used+Math.ceil(size/100)));
+ log(`PUT ${key}: hashed → placed on ${reps.map(r=>"N"+r).join(", ")} → quorum committed`,"ok");render()}
+function simulateWrite(){document.getElementById("objName").value="objects/generated-"+(++seq)+".bin";putObject({preventDefault(){}})}
+function verifyAll(){log("integrity scan started: reading hashes from all healthy replicas");setTimeout(()=>{let bad=objects.filter(o=>o.state!=="healthy").length;if(bad){log(`${bad} inconsistent object(s) found; repair queue populated`,"warn");markRepairs()}else log("integrity scan complete: all sampled checksums match","ok")},500)}
+function repairAll(){if(!queue){log("repair scheduler: nothing to repair","ok");return}markRepairs(true)}
+function markRepairs(immediate=false){document.getElementById("repairProgress").style.width="15%";let start=Date.now();const timer=setInterval(()=>{let p=Math.min(100,((Date.now()-start)/(immediate?1000:2200))*100);document.getElementById("repairProgress").style.width=p+"%";if(p>=100){clearInterval(timer);objects.forEach(o=>{if(o.state!=="healthy"){o.state="healthy";const good=nodes.filter(n=>n.up&&!n.partitioned).map(n=>+n.id.split("-")[1]);if(good.length>=2)o.replicas=[...new Set([...o.replicas.filter(r=>good.includes(r)),...good])].slice(0,+document.getElementById("policy").value)}});queue=0;log("background repair complete: replicas reconciled and checksums verified","ok");render()}},80)}
+render();log("Vault control plane initialized: 6 storage nodes, quorum metadata, checksum verification enabled","ok");
+</script>
+</body>
+</html>
